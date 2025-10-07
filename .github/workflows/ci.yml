@@ -1,0 +1,365 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  PYTHON_VERSION: '3.9'
+  NODE_VERSION: '18'
+
+jobs:
+  # Python Backend Tests
+  backend-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.10']
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-cov pytest-asyncio
+    
+    - name: Create test directories
+      run: |
+        mkdir -p data logs models/checkpoints models/cache uploads
+    
+    - name: Run backend unit tests
+      run: |
+        python -m pytest tests/ -v --cov=src --cov-report=xml --cov-report=html
+      env:
+        PYTHONPATH: ${{ github.workspace }}
+    
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: backend
+        name: backend-coverage
+        fail_ci_if_error: false
+
+  # Frontend Tests
+  frontend-tests:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: web/frontend/package-lock.json
+    
+    - name: Install frontend dependencies
+      working-directory: web/frontend
+      run: npm ci
+    
+    - name: Run frontend tests
+      working-directory: web/frontend
+      run: npm run test:ci
+    
+    - name: Upload frontend coverage
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./web/frontend/coverage/lcov.info
+        flags: frontend
+        name: frontend-coverage
+        fail_ci_if_error: false
+
+  # Code Quality Checks
+  code-quality:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Install linting tools
+      run: |
+        python -m pip install --upgrade pip
+        pip install black flake8 mypy isort
+        pip install -r requirements.txt
+    
+    - name: Run Black (code formatting)
+      run: black --check --diff src/ tests/ web/backend/
+    
+    - name: Run isort (import sorting)
+      run: isort --check-only --diff src/ tests/ web/backend/
+    
+    - name: Run Flake8 (linting)
+      run: flake8 src/ tests/ web/backend/ --max-line-length=88 --extend-ignore=E203,W503
+    
+    - name: Run MyPy (type checking)
+      run: mypy src/ --ignore-missing-imports --no-strict-optional
+      continue-on-error: true
+
+  # Security Scanning
+  security-scan:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Run Bandit Security Scan
+      uses: securecodewarrior/github-action-bandit@v1
+      with:
+        path: "src/"
+        level: "medium"
+        confidence: "medium"
+        exit_zero: true
+    
+    - name: Run Safety Check
+      run: |
+        python -m pip install --upgrade pip safety
+        pip install -r requirements.txt
+        safety check --json --output safety-report.json || true
+    
+    - name: Upload security scan results
+      uses: actions/upload-artifact@v3
+      with:
+        name: security-reports
+        path: |
+          bandit-report.json
+          safety-report.json
+
+  # Model Validation Tests
+  model-validation:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Create test directories
+      run: |
+        mkdir -p data logs models/checkpoints models/cache uploads
+    
+    - name: Run model architecture tests
+      run: |
+        python -m pytest tests/test_cnn_module.py::test_model_architecture -v
+        python -m pytest tests/test_transformer_module.py::test_model_architecture -v
+        python -m pytest tests/test_lstm_module.py::test_model_architecture -v
+      env:
+        PYTHONPATH: ${{ github.workspace }}
+    
+    - name: Run model performance benchmarks
+      run: |
+        python -c "
+        import sys
+        sys.path.append('.')
+        from src.models.cnn.model import CustomCNN
+        from src.models.transformer.model import CustomTransformer
+        from src.models.lstm.model import LSTMWithAttention
+        import torch
+        
+        # Test CNN
+        cnn = CustomCNN(num_classes=10)
+        x = torch.randn(1, 3, 32, 32)
+        output = cnn(x)
+        assert output.shape == (1, 10), f'CNN output shape mismatch: {output.shape}'
+        
+        # Test Transformer
+        transformer = CustomTransformer(vocab_size=1000, d_model=128, num_heads=4, num_layers=2, num_classes=2)
+        x = torch.randint(0, 1000, (1, 50))
+        output = transformer(x)
+        assert output.shape == (1, 2), f'Transformer output shape mismatch: {output.shape}'
+        
+        # Test LSTM
+        lstm = LSTMWithAttention(input_size=10, hidden_size=64, num_layers=2, output_size=1)
+        x = torch.randn(1, 20, 10)
+        output = lstm(x)
+        assert output.shape == (1, 1), f'LSTM output shape mismatch: {output.shape}'
+        
+        print('All model architecture tests passed!')
+        "
+
+  # Integration Tests
+  integration-tests:
+    runs-on: ubuntu-latest
+    needs: [backend-tests, frontend-tests]
+    
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -r web/backend/requirements.txt
+    
+    - name: Create test directories
+      run: |
+        mkdir -p data logs models/checkpoints models/cache uploads
+    
+    - name: Run integration tests
+      run: |
+        python -m pytest tests/test_training_integration.py -v
+        python -m pytest tests/test_inference_integration.py -v
+        python -m pytest web/backend/tests/ -v
+      env:
+        PYTHONPATH: ${{ github.workspace }}
+        REDIS_URL: redis://localhost:6379/0
+
+  # Docker Build Test
+  docker-build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Build development image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile.dev
+        push: false
+        tags: neural-showcase:dev
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+    
+    - name: Build production image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile
+        push: false
+        tags: neural-showcase:latest
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+    
+    - name: Test production image
+      run: |
+        docker run --rm -d --name test-app -p 8000:8000 neural-showcase:latest
+        sleep 30
+        curl -f http://localhost:8000/health || exit 1
+        docker stop test-app
+
+  # Performance Tests
+  performance-tests:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install locust
+    
+    - name: Create test directories
+      run: |
+        mkdir -p data logs models/checkpoints models/cache uploads
+    
+    - name: Run performance benchmarks
+      run: |
+        python -c "
+        import time
+        import torch
+        from src.models.cnn.model import CustomCNN
+        
+        model = CustomCNN(num_classes=10)
+        model.eval()
+        
+        # Warmup
+        for _ in range(10):
+            x = torch.randn(1, 3, 32, 32)
+            with torch.no_grad():
+                _ = model(x)
+        
+        # Benchmark
+        times = []
+        for _ in range(100):
+            x = torch.randn(1, 3, 32, 32)
+            start = time.time()
+            with torch.no_grad():
+                _ = model(x)
+            times.append(time.time() - start)
+        
+        avg_time = sum(times) / len(times)
+        print(f'Average inference time: {avg_time:.4f}s')
+        assert avg_time < 0.1, f'Inference too slow: {avg_time:.4f}s'
+        "
+
+  # Notification
+  notify:
+    runs-on: ubuntu-latest
+    needs: [backend-tests, frontend-tests, code-quality, model-validation, integration-tests, docker-build]
+    if: always()
+    
+    steps:
+    - name: Notify on success
+      if: ${{ needs.backend-tests.result == 'success' && needs.frontend-tests.result == 'success' && needs.code-quality.result == 'success' && needs.model-validation.result == 'success' && needs.integration-tests.result == 'success' && needs.docker-build.result == 'success' }}
+      run: echo "✅ All CI checks passed successfully!"
+    
+    - name: Notify on failure
+      if: ${{ needs.backend-tests.result == 'failure' || needs.frontend-tests.result == 'failure' || needs.code-quality.result == 'failure' || needs.model-validation.result == 'failure' || needs.integration-tests.result == 'failure' || needs.docker-build.result == 'failure' }}
+      run: |
+        echo "❌ CI checks failed!"
+        echo "Backend tests: ${{ needs.backend-tests.result }}"
+        echo "Frontend tests: ${{ needs.frontend-tests.result }}"
+        echo "Code quality: ${{ needs.code-quality.result }}"
+        echo "Model validation: ${{ needs.model-validation.result }}"
+        echo "Integration tests: ${{ needs.integration-tests.result }}"
+        echo "Docker build: ${{ needs.docker-build.result }}"
+        exit 1

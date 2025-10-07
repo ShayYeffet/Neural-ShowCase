@@ -1,0 +1,471 @@
+name: Model Validation and Performance Monitoring
+
+on:
+  schedule:
+    # Run daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      model_type:
+        description: 'Model type to validate'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+        - all
+        - cnn
+        - transformer
+        - lstm
+      performance_threshold:
+        description: 'Performance threshold (0.0-1.0)'
+        required: false
+        default: '0.8'
+        type: string
+
+env:
+  PYTHON_VERSION: '3.9'
+
+jobs:
+  # Model Architecture Validation
+  validate-architectures:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        model: [cnn, transformer, lstm]
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest
+    
+    - name: Create test directories
+      run: |
+        mkdir -p data logs models/checkpoints models/cache uploads
+    
+    - name: Validate ${{ matrix.model }} architecture
+      run: |
+        python -c "
+        import sys
+        sys.path.append('.')
+        
+        if '${{ matrix.model }}' == 'cnn':
+            from src.models.cnn.model import CustomCNN
+            import torch
+            
+            model = CustomCNN(num_classes=10)
+            x = torch.randn(4, 3, 32, 32)  # Batch of 4 images
+            output = model(x)
+            
+            assert output.shape == (4, 10), f'Expected (4, 10), got {output.shape}'
+            assert not torch.isnan(output).any(), 'Model output contains NaN values'
+            assert torch.isfinite(output).all(), 'Model output contains infinite values'
+            
+            # Test gradient flow
+            loss = output.sum()
+            loss.backward()
+            
+            has_gradients = any(p.grad is not None and p.grad.abs().sum() > 0 for p in model.parameters())
+            assert has_gradients, 'No gradients computed - gradient flow issue'
+            
+            print('✅ CNN architecture validation passed')
+            
+        elif '${{ matrix.model }}' == 'transformer':
+            from src.models.transformer.model import CustomTransformer
+            import torch
+            
+            model = CustomTransformer(vocab_size=1000, d_model=128, num_heads=4, num_layers=2, num_classes=2)
+            x = torch.randint(0, 1000, (4, 50))  # Batch of 4 sequences
+            output = model(x)
+            
+            assert output.shape == (4, 2), f'Expected (4, 2), got {output.shape}'
+            assert not torch.isnan(output).any(), 'Model output contains NaN values'
+            assert torch.isfinite(output).all(), 'Model output contains infinite values'
+            
+            # Test attention weights
+            attention_weights = model.get_attention_weights(x)
+            assert attention_weights is not None, 'Attention weights not available'
+            
+            print('✅ Transformer architecture validation passed')
+            
+        elif '${{ matrix.model }}' == 'lstm':
+            from src.models.lstm.model import LSTMWithAttention
+            import torch
+            
+            model = LSTMWithAttention(input_size=10, hidden_size=64, num_layers=2, output_size=1)
+            x = torch.randn(4, 20, 10)  # Batch of 4 sequences
+            output = model(x)
+            
+            assert output.shape == (4, 1), f'Expected (4, 1), got {output.shape}'
+            assert not torch.isnan(output).any(), 'Model output contains NaN values'
+            assert torch.isfinite(output).all(), 'Model output contains infinite values'
+            
+            print('✅ LSTM architecture validation passed')
+        "
+      env:
+        PYTHONPATH: ${{ github.workspace }}
+
+  # Performance Benchmarking
+  performance-benchmark:
+    runs-on: ubuntu-latest
+    needs: validate-architectures
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install psutil memory-profiler
+    
+    - name: Create test directories
+      run: |
+        mkdir -p data logs models/checkpoints models/cache uploads
+    
+    - name: Run performance benchmarks
+      run: |
+        python -c "
+        import time
+        import torch
+        import psutil
+        import sys
+        sys.path.append('.')
+        
+        from src.models.cnn.model import CustomCNN
+        from src.models.transformer.model import CustomTransformer
+        from src.models.lstm.model import LSTMWithAttention
+        
+        def benchmark_model(model, input_tensor, model_name, num_runs=100):
+            model.eval()
+            
+            # Warmup
+            for _ in range(10):
+                with torch.no_grad():
+                    _ = model(input_tensor)
+            
+            # Memory usage before
+            process = psutil.Process()
+            memory_before = process.memory_info().rss / 1024 / 1024  # MB
+            
+            # Benchmark inference time
+            times = []
+            with torch.no_grad():
+                for _ in range(num_runs):
+                    start = time.time()
+                    output = model(input_tensor)
+                    times.append(time.time() - start)
+            
+            # Memory usage after
+            memory_after = process.memory_info().rss / 1024 / 1024  # MB
+            
+            avg_time = sum(times) / len(times)
+            memory_used = memory_after - memory_before
+            
+            print(f'{model_name} Performance:')
+            print(f'  Average inference time: {avg_time:.4f}s')
+            print(f'  Memory usage: {memory_used:.2f}MB')
+            print(f'  Throughput: {1/avg_time:.2f} inferences/sec')
+            
+            # Performance thresholds
+            threshold = float('${{ github.event.inputs.performance_threshold }}' or '0.8')
+            max_time = 0.1  # 100ms max inference time
+            max_memory = 500  # 500MB max memory usage
+            
+            assert avg_time < max_time, f'{model_name} inference too slow: {avg_time:.4f}s > {max_time}s'
+            assert memory_used < max_memory, f'{model_name} memory usage too high: {memory_used:.2f}MB > {max_memory}MB'
+            
+            return {
+                'model': model_name,
+                'avg_time': avg_time,
+                'memory_used': memory_used,
+                'throughput': 1/avg_time
+            }
+        
+        results = []
+        
+        # Benchmark CNN
+        if '${{ github.event.inputs.model_type }}' in ['all', 'cnn']:
+            cnn = CustomCNN(num_classes=10)
+            cnn_input = torch.randn(1, 3, 32, 32)
+            results.append(benchmark_model(cnn, cnn_input, 'CNN'))
+        
+        # Benchmark Transformer
+        if '${{ github.event.inputs.model_type }}' in ['all', 'transformer']:
+            transformer = CustomTransformer(vocab_size=1000, d_model=128, num_heads=4, num_layers=2, num_classes=2)
+            transformer_input = torch.randint(0, 1000, (1, 50))
+            results.append(benchmark_model(transformer, transformer_input, 'Transformer'))
+        
+        # Benchmark LSTM
+        if '${{ github.event.inputs.model_type }}' in ['all', 'lstm']:
+            lstm = LSTMWithAttention(input_size=10, hidden_size=64, num_layers=2, output_size=1)
+            lstm_input = torch.randn(1, 20, 10)
+            results.append(benchmark_model(lstm, lstm_input, 'LSTM'))
+        
+        print('\\n📊 Performance Summary:')
+        for result in results:
+            print(f'{result[\"model\"]}: {result[\"avg_time\"]:.4f}s, {result[\"memory_used\"]:.2f}MB, {result[\"throughput\"]:.2f} inf/sec')
+        
+        print('\\n✅ All performance benchmarks passed!')
+        "
+      env:
+        PYTHONPATH: ${{ github.workspace }}
+
+  # Model Accuracy Validation
+  accuracy-validation:
+    runs-on: ubuntu-latest
+    needs: validate-architectures
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Create test directories
+      run: |
+        mkdir -p data logs models/checkpoints models/cache uploads
+    
+    - name: Download test datasets
+      run: |
+        python -c "
+        import sys
+        sys.path.append('.')
+        
+        # Download small test datasets for validation
+        from src.data.cifar10_loader import CIFAR10DataLoader
+        from src.data.text_loader import TextDataLoader
+        from src.data.timeseries_loader import TimeSeriesDataLoader
+        
+        print('Downloading test datasets...')
+        
+        # CIFAR-10 test data
+        cifar_loader = CIFAR10DataLoader(batch_size=32, data_dir='./data')
+        test_loader = cifar_loader.get_test_loader()
+        print(f'CIFAR-10 test samples: {len(test_loader.dataset)}')
+        
+        # Text test data
+        text_loader = TextDataLoader(batch_size=32, data_dir='./data')
+        # This would download/prepare text data
+        
+        # Time series test data
+        ts_loader = TimeSeriesDataLoader(batch_size=32, data_dir='./data')
+        # This would download/prepare time series data
+        
+        print('Test datasets ready!')
+        "
+      env:
+        PYTHONPATH: ${{ github.workspace }}
+    
+    - name: Validate model accuracy
+      run: |
+        python -c "
+        import torch
+        import sys
+        sys.path.append('.')
+        
+        from src.models.cnn.model import CustomCNN
+        from src.data.cifar10_loader import CIFAR10DataLoader
+        
+        # Test CNN accuracy on a small subset
+        print('Testing CNN accuracy...')
+        model = CustomCNN(num_classes=10)
+        model.eval()
+        
+        # Load test data
+        data_loader = CIFAR10DataLoader(batch_size=32, data_dir='./data')
+        test_loader = data_loader.get_test_loader()
+        
+        correct = 0
+        total = 0
+        samples_tested = 0
+        max_samples = 1000  # Test on first 1000 samples
+        
+        with torch.no_grad():
+            for images, labels in test_loader:
+                if samples_tested >= max_samples:
+                    break
+                
+                outputs = model(images)
+                _, predicted = torch.max(outputs.data, 1)
+                total += labels.size(0)
+                correct += (predicted == labels).sum().item()
+                samples_tested += labels.size(0)
+        
+        accuracy = 100 * correct / total
+        print(f'CNN accuracy on {total} samples: {accuracy:.2f}%')
+        
+        # For untrained model, we expect random performance (~10% for 10 classes)
+        # This validates the model can make predictions
+        assert accuracy >= 5.0, f'CNN accuracy too low: {accuracy:.2f}% (expected >= 5%)'
+        assert accuracy <= 50.0, f'CNN accuracy suspiciously high for untrained model: {accuracy:.2f}%'
+        
+        print('✅ Model accuracy validation passed!')
+        "
+      env:
+        PYTHONPATH: ${{ github.workspace }}
+
+  # Memory Leak Detection
+  memory-leak-test:
+    runs-on: ubuntu-latest
+    needs: validate-architectures
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install psutil memory-profiler
+    
+    - name: Test for memory leaks
+      run: |
+        python -c "
+        import torch
+        import psutil
+        import gc
+        import sys
+        sys.path.append('.')
+        
+        from src.models.cnn.model import CustomCNN
+        
+        print('Testing for memory leaks...')
+        
+        model = CustomCNN(num_classes=10)
+        model.eval()
+        
+        process = psutil.Process()
+        initial_memory = process.memory_info().rss / 1024 / 1024  # MB
+        
+        # Run many inference cycles
+        for i in range(1000):
+            x = torch.randn(1, 3, 32, 32)
+            with torch.no_grad():
+                output = model(x)
+            
+            # Clear variables
+            del x, output
+            
+            # Check memory every 100 iterations
+            if i % 100 == 0:
+                gc.collect()
+                current_memory = process.memory_info().rss / 1024 / 1024
+                memory_increase = current_memory - initial_memory
+                
+                print(f'Iteration {i}: Memory usage: {current_memory:.2f}MB (+{memory_increase:.2f}MB)')
+                
+                # Allow some memory increase but not excessive
+                assert memory_increase < 100, f'Memory leak detected: {memory_increase:.2f}MB increase'
+        
+        final_memory = process.memory_info().rss / 1024 / 1024
+        total_increase = final_memory - initial_memory
+        
+        print(f'Final memory increase: {total_increase:.2f}MB')
+        assert total_increase < 50, f'Significant memory leak: {total_increase:.2f}MB'
+        
+        print('✅ No memory leaks detected!')
+        "
+      env:
+        PYTHONPATH: ${{ github.workspace }}
+
+  # Generate Performance Report
+  generate-report:
+    runs-on: ubuntu-latest
+    needs: [validate-architectures, performance-benchmark, accuracy-validation, memory-leak-test]
+    if: always()
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Generate performance report
+      run: |
+        cat > model-validation-report.md << 'EOF'
+        # Model Validation Report
+        
+        **Date**: $(date)
+        **Commit**: ${{ github.sha }}
+        **Branch**: ${{ github.ref_name }}
+        
+        ## Validation Results
+        
+        ### Architecture Validation
+        - **CNN**: ${{ needs.validate-architectures.result }}
+        - **Transformer**: ${{ needs.validate-architectures.result }}
+        - **LSTM**: ${{ needs.validate-architectures.result }}
+        
+        ### Performance Benchmarks
+        - **Status**: ${{ needs.performance-benchmark.result }}
+        - **Threshold**: ${{ github.event.inputs.performance_threshold || '0.8' }}
+        
+        ### Accuracy Validation
+        - **Status**: ${{ needs.accuracy-validation.result }}
+        
+        ### Memory Leak Test
+        - **Status**: ${{ needs.memory-leak-test.result }}
+        
+        ## Summary
+        
+        Overall validation status: ${{ (needs.validate-architectures.result == 'success' && needs.performance-benchmark.result == 'success' && needs.accuracy-validation.result == 'success' && needs.memory-leak-test.result == 'success') && '✅ PASSED' || '❌ FAILED' }}
+        
+        EOF
+        
+        echo "📊 Model validation report generated"
+        cat model-validation-report.md
+    
+    - name: Upload validation report
+      uses: actions/upload-artifact@v3
+      with:
+        name: model-validation-report-${{ github.run_number }}
+        path: model-validation-report.md
+        retention-days: 30
+
+  # Notify Results
+  notify:
+    runs-on: ubuntu-latest
+    needs: [validate-architectures, performance-benchmark, accuracy-validation, memory-leak-test, generate-report]
+    if: always()
+    
+    steps:
+    - name: Notify validation results
+      run: |
+        echo "📋 Model Validation Summary:"
+        echo "Architecture Validation: ${{ needs.validate-architectures.result }}"
+        echo "Performance Benchmark: ${{ needs.performance-benchmark.result }}"
+        echo "Accuracy Validation: ${{ needs.accuracy-validation.result }}"
+        echo "Memory Leak Test: ${{ needs.memory-leak-test.result }}"
+        
+        if [[ "${{ needs.validate-architectures.result }}" == "success" && 
+              "${{ needs.performance-benchmark.result }}" == "success" && 
+              "${{ needs.accuracy-validation.result }}" == "success" && 
+              "${{ needs.memory-leak-test.result }}" == "success" ]]; then
+          echo "✅ All model validations passed!"
+        else
+          echo "❌ Some model validations failed!"
+          exit 1
+        fi
