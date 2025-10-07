@@ -12,7 +12,7 @@ A modern web application demonstrating different neural network architectures wi
 
 ## 🎯 Live Demo
 
-Try the live demo: [Neural Showcase Demo](your-demo-link-here)
+*Demo deployment coming soon - follow the setup instructions below to run locally*
 
 ## 🛠️ Tech Stack
 
@@ -153,6 +153,10 @@ This project is licensed under the MIT License.
 - PyTorch team for the pre-trained models
 - Material-UI for the beautiful components
 - FastAPI for the excellent web framework
+
+## 🚀 Deployment
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed deployment instructions to Vercel, Railway, Heroku, and other platforms.
 
 ## 📞 Contact
 
