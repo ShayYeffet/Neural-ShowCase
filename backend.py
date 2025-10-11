@@ -97,26 +97,26 @@ IMAGENET_CLASSES = [
     'ice_bear', 'sloth_bear', 'mongoose', 'meerkat'
 ]
 
-def load_models():
-    """Load PyTorch models only"""
+def get_cnn_model():
+    """Load CNN model on-demand to save memory"""
     global cnn_model, transform
     
-    print("Loading ResNet-18 (PyTorch only)...")
-    cnn_model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
-    cnn_model.eval()
+    if cnn_model is None:
+        print("Loading ResNet-18 on-demand...")
+        cnn_model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
+        cnn_model.eval()
+        
+        transform = transforms.Compose([
+            transforms.Resize(256),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ])
     
-    transform = transforms.Compose([
-        transforms.Resize(256),
-        transforms.CenterCrop(224),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-    ])
-    
-    print("✅ Models loaded successfully!")
+    return cnn_model, transform
 
-@app.on_event("startup")
-async def startup_event():
-    load_models()
+# Remove startup event to save memory
+# Models will load when first used
 
 @app.get("/")
 async def root():
