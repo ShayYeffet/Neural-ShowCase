@@ -1,20 +1,20 @@
-# 🧠 Neural Showcase
+# Neural Showcase
 
 A modern web application demonstrating different neural network architectures with real AI models. Built for educational purposes and portfolio demonstration.
 
-## ✨ Features
+## Features
 
-- **🖼️ Image Classification**: Upload images and get real-time predictions using ResNet-18
-- **💭 Sentiment Analysis**: Choose from 3 different AI models (DistilBERT, RoBERTa, VADER)
-- **📈 Time Series Prediction**: Forecast future values from historical data
-- **🎨 Modern UI**: Beautiful React interface with Material-UI components
-- **🚀 Real AI Models**: Uses pre-trained PyTorch models
+- ** Image Classification**: Upload images and get real-time predictions using ResNet-18
+- ** Sentiment Analysis**: Choose from 3 different AI models (DistilBERT, RoBERTa, VADER)
+- ** Time Series Prediction**: Forecast future values from historical data
+- ** Modern UI**: Beautiful React interface with Material-UI components
+- ** Real AI Models**: Uses pre-trained PyTorch models
 
-## 🎯 Live Demo
+## Live Demo
 
 *Demo deployment coming soon - follow the setup instructions below to run locally*
 
-## 🛠️ Tech Stack
+## Tech Stack
 
 **Frontend:**
 - React 18 with TypeScript
@@ -28,7 +28,7 @@ A modern web application demonstrating different neural network architectures wi
 - Advanced sentiment analysis algorithms
 - Real pre-trained models (no training required)
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 - Python 3.8+
@@ -91,7 +91,7 @@ The web app will open at `http://localhost:3000`
 2. Choose number of future steps to predict
 3. Get forecasted values with uncertainty estimates
 
-## 🎓 Educational Value
+## Educational Value
 
 This project demonstrates:
 - **CNN Architecture**: How convolutional networks process images
@@ -100,7 +100,7 @@ This project demonstrates:
 - **Full-Stack AI**: Complete pipeline from model to web interface
 - **Real-World AI**: Using production-ready pre-trained models
 
-## 🏗️ Project Structure
+## Project Structure
 
 ```
 neural-showcase/
@@ -115,7 +115,7 @@ neural-showcase/
 └── README.md              # This file
 ```
 
-## 🔧 API Endpoints
+## API Endpoints
 
 - `GET /models` - List available AI models
 - `POST /predict/image` - Image classification with ResNet-18
@@ -123,7 +123,7 @@ neural-showcase/
 - `POST /predict/timeseries` - Time series forecasting
 - `GET /docs` - Interactive API documentation
 
-## 🤖 Models Used
+## Models Used
 
 **Image Classification:**
 - **ResNet-18**: Pre-trained on ImageNet (1000 classes)
@@ -136,7 +136,7 @@ neural-showcase/
 **Time Series:**
 - **Linear Regression**: Simple but effective forecasting
 
-## 🤝 Contributing
+## Contributing
 
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
@@ -144,17 +144,17 @@ neural-showcase/
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
-## 📄 License
+## License
 
 This project is licensed under the MIT License.
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - PyTorch team for the pre-trained models
 - Material-UI for the beautiful components
 - FastAPI for the excellent web framework
 
-## 🚀 Deployment
+## Deployment
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed deployment instructions to Vercel, Railway, Heroku, and other platforms.
 
